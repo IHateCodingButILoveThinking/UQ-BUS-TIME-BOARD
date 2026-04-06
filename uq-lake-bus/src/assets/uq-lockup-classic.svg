@@ -1,0 +1,26 @@
+<svg width="640" height="180" viewBox="0 0 640 180" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>The University of Queensland Australia</title>
+  <g fill="#162B57">
+    <path d="M58 18H140V76C140 112 119 139 99 156C79 139 58 112 58 76V18Z"/>
+    <path d="M64 24H134V76C134 109 115 134 99 148C83 134 64 109 64 76V24Z" fill="white"/>
+    <path d="M72 32H126V76C126 104 111 125 99 137C87 125 72 104 72 76V32Z"/>
+    <path d="M80 61C88 61 92 53 99 47C106 53 110 61 118 61C110 67 106 74 99 82C92 74 88 67 80 61Z" fill="white"/>
+    <path d="M80 103C88 103 92 111 99 117C106 111 110 103 118 103C110 97 106 90 99 82C92 90 88 97 80 103Z" fill="white"/>
+    <path d="M88 72H110C114.418 72 118 75.5817 118 80V94C118 98.4183 114.418 102 110 102H88C83.5817 102 80 98.4183 80 94V80C80 75.5817 83.5817 72 88 72Z" fill="white"/>
+    <path d="M89 73.5H109C112.59 73.5 115.5 76.4101 115.5 80V94C115.5 97.5899 112.59 100.5 109 100.5H89C85.4101 100.5 82.5 97.5899 82.5 94V80C82.5 76.4101 85.4101 73.5 89 73.5Z" stroke="#162B57" stroke-width="2"/>
+    <path d="M99 73.5V100.5" stroke="#162B57" stroke-width="2"/>
+    <path d="M54 120L40 140V162L60 148L54 120Z"/>
+    <path d="M144 120L158 140V162L138 148L144 120Z"/>
+  </g>
+  <g fill="#162B57">
+    <text x="184" y="74" font-size="44" font-family="Georgia, 'Times New Roman', serif" font-weight="700" letter-spacing="1.2">
+      THE UNIVERSITY
+    </text>
+    <text x="184" y="122" font-size="44" font-family="Georgia, 'Times New Roman', serif" font-weight="700" letter-spacing="1.2">
+      OF QUEENSLAND
+    </text>
+    <text x="186" y="160" font-size="18" font-family="Georgia, 'Times New Roman', serif" font-weight="700" letter-spacing="10">
+      AUSTRALIA
+    </text>
+  </g>
+</svg>

@@ -1,12 +1,43 @@
 import { useEffect, useMemo, useState } from "react";
 
-import uqLockup from "./assets/uq-lockup.svg";
+import uqChancellorsLockup from "./assets/uq-lockup-classic.svg";
+import uqLakesLockup from "./assets/uq-lockup.svg";
 
 const REFRESH_MS = 30000;
 const FILTER_PENDING_MS = 450;
 const ALL_ROUTES_ID = "all-routes";
+const DEFAULT_STOP_ID = "uq-lakes-station";
+const BRISBANE_TZ = "Australia/Brisbane";
+
+const STOPS = {
+  "uq-lakes-station": {
+    id: "uq-lakes-station",
+    displayName: "UQ Lakes station",
+    switchLabel: "UQ Lakes station",
+    themeClass: "theme-lakes",
+    themeKey: "lakes",
+    studentNote: "",
+    logoSrc: uqLakesLockup,
+    sheetDescription: "Current live board for the lakeside UQ stop.",
+    sourceMode: "live",
+  },
+  "uq-chancellors-place": {
+    id: "uq-chancellors-place",
+    displayName: "UQ Chancellor's Place",
+    switchLabel: "UQ Chancellor's Place",
+    themeClass: "theme-chancellors",
+    themeKey: "chancellors",
+    studentNote: "",
+    logoSrc: uqChancellorsLockup,
+    sheetDescription: "Current live board for Chancellor's Place UQ stop.",
+    sourceMode: "preview",
+  },
+};
+
+const STOP_OPTIONS = Object.values(STOPS);
 
 export default function App() {
+  const [selectedStopId, setSelectedStopId] = useState(getInitialStopId);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -14,9 +45,20 @@ export default function App() {
   const [appliedRoute, setAppliedRoute] = useState(ALL_ROUTES_ID);
   const [filterPending, setFilterPending] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [stopSheetOpen, setStopSheetOpen] = useState(false);
+
+  const activeStop = STOPS[selectedStopId] ?? STOPS[DEFAULT_STOP_ID];
+  const activeData =
+    activeStop.sourceMode === "preview" ? buildPreviewBoardData(activeStop) : data;
+  const departures = activeData?.departures ?? [];
+  const showLoadingState =
+    activeStop.sourceMode === "live" && loading && !activeData;
+  const showError = activeStop.sourceMode === "live" && error;
+  const modalOpen = filterOpen || stopSheetOpen;
 
   useEffect(() => {
     let timerId;
+    let isActive = true;
 
     const loadDepartures = async ({ silent } = {}) => {
       if (!silent) {
@@ -30,13 +72,23 @@ export default function App() {
         }
 
         const nextData = await response.json();
+        if (!isActive) {
+          return;
+        }
+
         setData(nextData);
         setError("");
       } catch (fetchError) {
+        if (!isActive) {
+          return;
+        }
+
         console.error(fetchError);
         setError("Unable to load buses right now.");
       } finally {
-        setLoading(false);
+        if (isActive) {
+          setLoading(false);
+        }
       }
     };
 
@@ -46,12 +98,13 @@ export default function App() {
     }, REFRESH_MS);
 
     return () => {
+      isActive = false;
       window.clearInterval(timerId);
     };
   }, []);
 
   useEffect(() => {
-    if (!filterOpen) {
+    if (!modalOpen) {
       return undefined;
     }
 
@@ -59,6 +112,7 @@ export default function App() {
     const handleKeyDown = (event) => {
       if (event.key === "Escape") {
         setFilterOpen(false);
+        setStopSheetOpen(false);
       }
     };
 
@@ -83,9 +137,31 @@ export default function App() {
       document.body.style.width = "";
       window.scrollTo(0, scrollY);
     };
-  }, [filterOpen]);
+  }, [modalOpen]);
 
-  const departures = data?.departures ?? [];
+  useEffect(() => {
+    document.documentElement.dataset.stopTheme = activeStop.themeKey;
+    document.body.dataset.stopTheme = activeStop.themeKey;
+    document.title = `${activeStop.switchLabel} Bus Board`;
+
+    return () => {
+      document.documentElement.removeAttribute("data-stop-theme");
+      document.body.removeAttribute("data-stop-theme");
+    };
+  }, [activeStop.themeKey, activeStop.switchLabel]);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+
+    if (selectedStopId === DEFAULT_STOP_ID) {
+      url.searchParams.delete("stop");
+    } else {
+      url.searchParams.set("stop", selectedStopId);
+    }
+
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, [selectedStopId]);
+
   const routeOptions = useMemo(() => {
     const groupedRoutes = departures.reduce((routeMap, departure) => {
       const routeId = departure.routeCode || "Bus";
@@ -194,24 +270,69 @@ export default function App() {
     ),
   );
 
+  const handleStopSelection = (stopId) => {
+    if (!isValidStopId(stopId)) {
+      return;
+    }
+
+    setStopSheetOpen(false);
+
+    if (stopId === selectedStopId) {
+      return;
+    }
+
+    setSelectedRoute(ALL_ROUTES_ID);
+    setAppliedRoute(ALL_ROUTES_ID);
+    setFilterPending(false);
+    setFilterOpen(false);
+    setSelectedStopId(stopId);
+  };
+
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${activeStop.themeClass}`}>
       <div className="side-stack">
         <section className="surface-panel hero-panel">
           <div className="hero-glow hero-glow-top" aria-hidden="true" />
           <div className="hero-glow hero-glow-bottom" aria-hidden="true" />
 
           <div className="hero-topbar">
-            <div className="brand-copy">
-              <div className="brand-copy-top">
-                <p className="eyebrow">UQ Lakes station</p>
-                <span className="student-note">For UQ students</span>
+            <div className="hero-copy">
+              <div className="brand-copy">
+                <div className="brand-copy-top">
+                  <p className="eyebrow">{activeStop.displayName}</p>
+                  {activeStop.studentNote ? (
+                    <span className="student-note">{activeStop.studentNote}</span>
+                  ) : null}
+                </div>
+
+                <button
+                  type="button"
+                  className={`stop-control ${stopSheetOpen ? "open" : ""}`}
+                  aria-expanded={stopSheetOpen}
+                  aria-haspopup="listbox"
+                  aria-label={`Switch UQ bus stop. Current stop ${activeStop.switchLabel}`}
+                  onClick={() => {
+                    setFilterOpen(false);
+                    setStopSheetOpen((currentOpen) => !currentOpen);
+                  }}
+                >
+                  <span
+                    className={`stop-control-icon ${showLoadingState ? "pending" : ""}`}
+                    aria-hidden="true"
+                  >
+                    {showLoadingState ? <SpinnerIcon /> : <SwitchIcon />}
+                  </span>
+                  <span className="stop-control-label">Switch stop</span>
+                  <span className="stop-control-arrow" aria-hidden="true">
+                    <ChevronIcon />
+                  </span>
+                </button>
               </div>
             </div>
 
             <img
               className="uq-lockup"
-              src={uqLockup}
+              src={activeStop.logoSrc}
               alt="The University of Queensland Australia"
             />
           </div>
@@ -286,11 +407,17 @@ export default function App() {
               </div>
             </article>
           ) : (
-            <EmptyState message="No buses right now." />
+            <EmptyState
+              message={
+                activeStop.sourceMode === "preview"
+                  ? "Preview frame ready for Chancellor's Place."
+                  : "No buses right now."
+              }
+            />
           )}
         </section>
 
-        {error ? (
+        {showError ? (
           <section className="surface-panel error-card">{error}</section>
         ) : null}
 
@@ -306,6 +433,7 @@ export default function App() {
                   return;
                 }
 
+                setStopSheetOpen(false);
                 setFilterOpen((currentOpen) => !currentOpen);
               }}
             >
@@ -344,7 +472,7 @@ export default function App() {
           ) : null}
         </div>
 
-        {loading && !data ? (
+        {showLoadingState ? (
           <div className="feed-list">
             {[1, 2, 3, 4].map((item) => (
               <article className="departure-card skeleton-card" key={item} />
@@ -381,10 +509,10 @@ export default function App() {
           </p>
         </div>
 
-        {data?.sourceUrl ? (
+        {activeData?.sourceUrl ? (
           <a
             className="app-footer-link"
-            href={data.sourceUrl}
+            href={activeData.sourceUrl}
             target="_blank"
             rel="noreferrer"
           >
@@ -460,6 +588,78 @@ export default function App() {
                         <CheckIcon />
                       ) : (
                         <span className="filter-option-check-dot" />
+                      )}
+                    </span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {stopSheetOpen ? (
+        <div className="filter-sheet-layer">
+          <button
+            type="button"
+            className="filter-sheet-backdrop"
+            aria-label="Close bus stop picker"
+            onClick={() => setStopSheetOpen(false)}
+          />
+
+          <section
+            className="filter-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Choose bus stop"
+          >
+            <div className="filter-sheet-handle" aria-hidden="true" />
+
+            <div className="filter-sheet-header">
+              <div>
+                <p className="filter-sheet-title">Choose bus stop</p>
+              </div>
+
+              <button
+                type="button"
+                className="filter-sheet-close"
+                aria-label="Close bus stop picker"
+                onClick={() => setStopSheetOpen(false)}
+              >
+                <CloseIcon />
+              </button>
+            </div>
+
+            <div className="filter-sheet-list" role="listbox">
+              {STOP_OPTIONS.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedStopId === option.id}
+                  aria-label={`${option.switchLabel}, ${getStopOptionBadge(selectedStopId, option.id)}`}
+                  className={`stop-option ${selectedStopId === option.id ? "selected" : ""}`}
+                  onClick={() => handleStopSelection(option.id)}
+                >
+                  <span className="stop-option-main">
+                    <span className="stop-option-title">
+                      {option.switchLabel}
+                    </span>
+                    <span className="stop-option-copy">
+                      {option.sheetDescription}
+                    </span>
+                  </span>
+
+                  <span className="stop-option-tail">
+                    <span className="stop-option-badge">
+                      {getStopOptionBadge(selectedStopId, option.id)}
+                    </span>
+
+                    <span className="stop-option-check" aria-hidden="true">
+                      {selectedStopId === option.id ? (
+                        <CheckIcon />
+                      ) : (
+                        <span className="stop-option-check-dot" />
                       )}
                     </span>
                   </span>
@@ -559,6 +759,20 @@ function SpinnerIcon() {
   );
 }
 
+function SwitchIcon() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="M4 6.5h9.5M10.75 3.75 13.5 6.5l-2.75 2.75M16 13.5H6.5M9.25 10.75 6.5 13.5l2.75 2.75"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 function CheckIcon() {
   return (
     <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
@@ -646,8 +860,142 @@ function EmptyState({
   );
 }
 
+function getInitialStopId() {
+  const stopId = new URLSearchParams(window.location.search).get("stop");
+  return isValidStopId(stopId) ? stopId : DEFAULT_STOP_ID;
+}
+
+function isValidStopId(stopId) {
+  return typeof stopId === "string" && Object.hasOwn(STOPS, stopId);
+}
+
+function getStopOptionBadge(selectedStopId, optionId) {
+  return selectedStopId === optionId ? "Current" : "Choose";
+}
+
+function buildPreviewBoardData(stop) {
+  return {
+    stopId: stop.id,
+    stopName: stop.displayName,
+    generatedAt: new Date().toISOString(),
+    sourceUrl: "",
+    departures: buildPreviewDepartures(stop.displayName),
+  };
+}
+
+function buildPreviewDepartures(stopName) {
+  const previewSchedule = [
+    {
+      routeCode: "402",
+      platform: "A",
+      minutesAway: 4,
+      destination: "Toowong",
+      fullHeadsign: "Uni of Qld, St Lucia, Toowong, Indooroopilly",
+      direction: "Outbound",
+    },
+    {
+      routeCode: "411",
+      platform: "C",
+      minutesAway: 7,
+      destination: "City",
+      fullHeadsign: "Uni of Qld, St Lucia, Toowong, Auchenflower, Milton, City",
+      direction: "Inbound",
+    },
+    {
+      routeCode: "412",
+      platform: "D",
+      minutesAway: 12,
+      destination: "City",
+      fullHeadsign:
+        "St Lucia South, Uni of Qld, St Lucia, Toowong, Milton, City",
+      direction: "Inbound",
+    },
+    {
+      routeCode: "414",
+      platform: "B",
+      minutesAway: 18,
+      destination: "City",
+      fullHeadsign: "Pinjarra Hills, Kenmore, Indooroopilly, Toowong, City",
+      direction: "Inbound",
+    },
+    {
+      routeCode: "427",
+      platform: "A",
+      minutesAway: 24,
+      destination: "Indooroopilly",
+      fullHeadsign: "Uni of Qld, St Lucia, Taringa, Indooroopilly",
+      direction: "Outbound",
+    },
+    {
+      routeCode: "428",
+      platform: "B",
+      minutesAway: 31,
+      destination: "Chapel Hill",
+      fullHeadsign: "Uni of Qld, St Lucia, Taringa, Indooroopilly, Chapel Hill",
+      direction: "Outbound",
+    },
+    {
+      routeCode: "432",
+      platform: "E",
+      minutesAway: 39,
+      destination: "City",
+      fullHeadsign: "Moggill Rd, Toowong, City",
+      direction: "Inbound",
+    },
+  ];
+
+  const now = Date.now();
+
+  return previewSchedule.map((departure, index) => {
+    const scheduledUtc = new Date(now + departure.minutesAway * 60_000).toISOString();
+
+    return {
+      id: `preview-${departure.routeCode}-${index}`,
+      routeCode: departure.routeCode,
+      destination: departure.destination,
+      fullHeadsign: departure.fullHeadsign,
+      direction: departure.direction,
+      scheduledUtc,
+      displayTime: formatTime(scheduledUtc),
+      countdownText: formatCountdown(departure.minutesAway),
+      countdownMinutes: departure.minutesAway,
+      stopId: stopName.toLowerCase().replaceAll(/[^a-z0-9]+/g, "-"),
+      stopName,
+      platform: departure.platform,
+      live: false,
+    };
+  });
+}
+
 function formatPlatform(platform) {
   return platform ? `Stop ${platform}` : "UQ";
+}
+
+function formatTime(dateTime) {
+  return new Intl.DateTimeFormat("en-AU", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZone: BRISBANE_TZ,
+  }).format(new Date(dateTime));
+}
+
+function formatCountdown(minutesAway) {
+  if (minutesAway <= 0) {
+    return "Now";
+  }
+
+  if (minutesAway < 60) {
+    return `${minutesAway} min`;
+  }
+
+  const hours = Math.floor(minutesAway / 60);
+  const minutes = minutesAway % 60;
+
+  if (minutes === 0) {
+    return `${hours}h`;
+  }
+
+  return `${hours}h ${minutes}m`;
 }
 
 function getRouteKind(routeCode) {
