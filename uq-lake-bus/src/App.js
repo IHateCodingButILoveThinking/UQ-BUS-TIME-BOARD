@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { ToastContainer, cssTransition, toast } from "react-toastify";
 
 import uqChancellorsLockup from "./assets/uq-lockup-classic.svg";
 import uqLakesLockup from "./assets/uq-lockup.svg";
@@ -8,6 +9,13 @@ const FILTER_PENDING_MS = 450;
 const ALL_ROUTES_ID = "all-routes";
 const DEFAULT_STOP_ID = "uq-lakes-station";
 const BRISBANE_TZ = "Australia/Brisbane";
+const FAVORITES_STORAGE_KEY = "uq-bus-board-favorites-v1";
+const toastTransition = cssTransition({
+  enter: "bus-toast-enter",
+  exit: "bus-toast-exit",
+  duration: [280, 220],
+  collapse: true,
+});
 
 const STOPS = {
   "uq-lakes-station": {
@@ -41,16 +49,34 @@ export default function App() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [selectedRoute, setSelectedRoute] = useState(ALL_ROUTES_ID);
-  const [appliedRoute, setAppliedRoute] = useState(ALL_ROUTES_ID);
+  const [selectedRoute, setSelectedRoute] = useState(getInitialRouteId);
+  const [appliedRoute, setAppliedRoute] = useState(getInitialRouteId);
   const [filterPending, setFilterPending] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [stopSheetOpen, setStopSheetOpen] = useState(false);
+  const [favoriteRoutes, setFavoriteRoutes] = useState(
+    getInitialFavoriteRoutes,
+  );
 
   const activeStop = STOPS[selectedStopId] ?? STOPS[DEFAULT_STOP_ID];
   const activeData =
-    activeStop.sourceMode === "preview" ? buildPreviewBoardData(activeStop) : data;
+    activeStop.sourceMode === "preview"
+      ? buildPreviewBoardData(activeStop)
+      : data;
   const departures = activeData?.departures ?? [];
+  const activeFavorites = useMemo(() => {
+    return favoriteRoutes
+      .filter((favorite) => favorite.stopId === selectedStopId)
+      .sort((left, right) =>
+        left.routeCode.localeCompare(right.routeCode, "en", {
+          numeric: true,
+          sensitivity: "base",
+        }),
+      );
+  }, [favoriteRoutes, selectedStopId]);
+  const favoriteRouteCodes = useMemo(() => {
+    return new Set(activeFavorites.map((favorite) => favorite.routeCode));
+  }, [activeFavorites]);
   const showLoadingState =
     activeStop.sourceMode === "live" && loading && !activeData;
   const showError = activeStop.sourceMode === "live" && error;
@@ -140,6 +166,21 @@ export default function App() {
   }, [modalOpen]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(
+        FAVORITES_STORAGE_KEY,
+        JSON.stringify(favoriteRoutes),
+      );
+    } catch (storageError) {
+      console.error("Could not save favourite routes.", storageError);
+    }
+  }, [favoriteRoutes]);
+
+  useEffect(() => {
     document.documentElement.dataset.stopTheme = activeStop.themeKey;
     document.body.dataset.stopTheme = activeStop.themeKey;
     document.title = `${activeStop.switchLabel} Bus Board`;
@@ -151,16 +192,16 @@ export default function App() {
   }, [activeStop.themeKey, activeStop.switchLabel]);
 
   useEffect(() => {
-    const url = new URL(window.location.href);
-
-    if (selectedStopId === DEFAULT_STOP_ID) {
-      url.searchParams.delete("stop");
-    } else {
-      url.searchParams.set("stop", selectedStopId);
-    }
-
-    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
-  }, [selectedStopId]);
+    window.history.replaceState(
+      {},
+      "",
+      buildAppUrl({
+        baseUrl: window.location.href,
+        routeCode: selectedRoute,
+        stopId: selectedStopId,
+      }),
+    );
+  }, [selectedRoute, selectedStopId]);
 
   const routeOptions = useMemo(() => {
     const groupedRoutes = departures.reduce((routeMap, departure) => {
@@ -204,6 +245,10 @@ export default function App() {
   }, [appliedRoute, departures]);
 
   useEffect(() => {
+    if (activeStop.sourceMode === "live" && loading && departures.length === 0) {
+      return;
+    }
+
     const hasSelectedRoute = routeOptions.some(
       (option) => option.id === selectedRoute,
     );
@@ -224,7 +269,14 @@ export default function App() {
       setFilterPending(false);
       setFilterOpen(false);
     }
-  }, [appliedRoute, routeOptions, selectedRoute]);
+  }, [
+    activeStop.sourceMode,
+    appliedRoute,
+    departures.length,
+    loading,
+    routeOptions,
+    selectedRoute,
+  ]);
 
   useEffect(() => {
     if (selectedRoute === appliedRoute) {
@@ -269,7 +321,9 @@ export default function App() {
       ),
     ),
   );
-
+  const closestHasSaved = closestDisplayDepartures.some((departure) => {
+    return favoriteRouteCodes.has(departure.routeCode);
+  });
   const handleStopSelection = (stopId) => {
     if (!isValidStopId(stopId)) {
       return;
@@ -288,6 +342,48 @@ export default function App() {
     setSelectedStopId(stopId);
   };
 
+  const toggleFavoriteRoute = (routeCode) => {
+    if (!routeCode || routeCode === ALL_ROUTES_ID) {
+      return;
+    }
+
+    const existingFavorite = findFavoriteRoute(
+      favoriteRoutes,
+      selectedStopId,
+      routeCode,
+    );
+
+    if (existingFavorite) {
+      setFavoriteRoutes((currentFavorites) => {
+        return currentFavorites.filter((favorite) => {
+          return !(
+            favorite.stopId === selectedStopId &&
+            favorite.routeCode === routeCode
+          );
+        });
+      });
+      toast.info(`Bus ${routeCode} removed from favourites.`, {
+        className: "bus-toast bus-toast-info",
+        bodyClassName: "bus-toast-body",
+      });
+      return;
+    }
+
+    setFavoriteRoutes((currentFavorites) => {
+      return [
+        ...currentFavorites,
+        createFavoriteRoute({
+          stopId: selectedStopId,
+          routeCode,
+        }),
+      ];
+    });
+    toast.success(`Bus ${routeCode} saved to favourites.`, {
+      className: "bus-toast bus-toast-success",
+      bodyClassName: "bus-toast-body",
+    });
+  };
+
   return (
     <main className={`app-shell ${activeStop.themeClass}`}>
       <div className="side-stack">
@@ -301,7 +397,9 @@ export default function App() {
                 <div className="brand-copy-top">
                   <p className="eyebrow">{activeStop.displayName}</p>
                   {activeStop.studentNote ? (
-                    <span className="student-note">{activeStop.studentNote}</span>
+                    <span className="student-note">
+                      {activeStop.studentNote}
+                    </span>
                   ) : null}
                 </div>
 
@@ -348,14 +446,24 @@ export default function App() {
               </div>
 
               <div className="board-primary">
-                <article className="board-primary-item">
+                <article
+                  className={`board-primary-item ${
+                    closestHasSaved ? "saved" : ""
+                  }`}
+                >
                   <div className="board-primary-topline">
                     <div className="board-route-group">
                       {closestDisplayDepartures.map((departure) => (
                         <RouteToken
                           code={departure.routeCode}
-                          className="board-route-pill"
+                          className={`board-route-pill ${
+                            favoriteRouteCodes.has(departure.routeCode)
+                              ? "saved"
+                              : ""
+                          }`}
                           key={`closest-route-${departure.id}`}
+                          saved={favoriteRouteCodes.has(departure.routeCode)}
+                          showMarkers
                         />
                       ))}
                     </div>
@@ -382,27 +490,41 @@ export default function App() {
 
                 {boardUpcoming.length ? (
                   <div className="mini-board-list">
-                    {boardUpcoming.map((departure) => (
-                      <article className="mini-board-item" key={departure.id}>
-                        <div className="mini-board-topline">
-                          <span className="mini-board-route">
-                            {departure.routeCode}
-                          </span>
-                          <strong>{departure.displayTime}</strong>
-                        </div>
-                        <div className="mini-board-bottomline">
-                          <span className="mini-board-stop">
-                            {formatPlatform(departure.platform)}
-                          </span>
-                          <span className="mini-board-time-note">
-                            {departure.countdownText}
-                          </span>
-                        </div>
-                      </article>
-                    ))}
+                    {boardUpcoming.map((departure) => {
+                      const isFavorite = favoriteRouteCodes.has(
+                        departure.routeCode,
+                      );
+
+                      return (
+                        <article
+                          className={`mini-board-item ${isFavorite ? "saved" : ""}`}
+                          key={departure.id}
+                        >
+                          <div className="mini-board-topline">
+                            <RouteToken
+                              code={departure.routeCode}
+                              className={`mini-board-route ${isFavorite ? "saved" : ""}`}
+                              saved={isFavorite}
+                              showMarkers
+                            />
+                            <strong>{departure.displayTime}</strong>
+                          </div>
+                          <div className="mini-board-bottomline">
+                            <span className="mini-board-stop">
+                              {formatPlatform(departure.platform)}
+                            </span>
+                            <span className="mini-board-time-note">
+                              {departure.countdownText}
+                            </span>
+                          </div>
+                        </article>
+                      );
+                    })}
                   </div>
                 ) : (
-                  <div className="mini-board-empty">No more upcoming buses.</div>
+                  <div className="mini-board-empty">
+                    No more upcoming buses.
+                  </div>
                 )}
               </div>
             </article>
@@ -458,6 +580,7 @@ export default function App() {
               </span>
             </button>
           </div>
+
         </section>
       </div>
 
@@ -489,9 +612,18 @@ export default function App() {
           </>
         ) : feedDepartures.length ? (
           <div className="feed-list">
-            {feedDepartures.map((departure) => (
-              <DepartureCard key={departure.id} departure={departure} />
-            ))}
+            {feedDepartures.map((departure) => {
+              return (
+                <DepartureCard
+                  key={departure.id}
+                  departure={departure}
+                  isFavorite={favoriteRouteCodes.has(departure.routeCode)}
+                  onToggleFavorite={() =>
+                    toggleFavoriteRoute(departure.routeCode)
+                  }
+                />
+              );
+            })}
           </div>
         ) : (
           <EmptyState compact message="No more buses in this selection." />
@@ -502,10 +634,10 @@ export default function App() {
         <div className="app-footer-copy">
           <strong>Translink Data Declaration</strong>
           <p>
-            This interface displays arrival information retrieved from
-            Translink open data. The underlying timetable and service data
-            remain the property of Translink, and this app does not claim
-            ownership of that data.
+            This interface displays arrival information retrieved from Translink
+            open data. The underlying timetable and service data remain the
+            property of Translink, and this app does not claim ownership of that
+            data.
           </p>
         </div>
 
@@ -669,11 +801,28 @@ export default function App() {
           </section>
         </div>
       ) : null}
+
+      <ToastContainer
+        autoClose={1200}
+        closeButton={false}
+        draggable={false}
+        hideProgressBar
+        newestOnTop
+        pauseOnFocusLoss={false}
+        pauseOnHover={false}
+        position="top-center"
+        transition={toastTransition}
+      />
     </main>
   );
 }
 
-function RouteToken({ code, className = "" }) {
+function RouteToken({
+  code,
+  className = "",
+  saved = false,
+  showMarkers = false,
+}) {
   const routeKind = getRouteKind(code);
   const routeClassName = ["route-token", routeKind, className]
     .filter(Boolean)
@@ -683,6 +832,13 @@ function RouteToken({ code, className = "" }) {
     <span className={routeClassName}>
       <TransportIcon kind={routeKind} />
       <span className="route-token-code">{code}</span>
+      {showMarkers && saved ? (
+        <span className="route-token-markers">
+          <span className="route-token-marker saved" aria-label="Saved route">
+            <FavoriteIcon filled />
+          </span>
+        </span>
+      ) : null}
     </span>
   );
 }
@@ -695,27 +851,59 @@ function TransportIcon({ kind }) {
   );
 }
 
-function DepartureCard({ departure }) {
+function DepartureCard({
+  departure,
+  isFavorite = false,
+  onToggleFavorite,
+}) {
   const routeSummary = formatRouteSummary(
     departure.fullHeadsign,
     departure.destination,
   );
+  const cardClassName = [
+    "departure-card",
+    isFavorite ? "saved" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <article className="departure-card">
+    <article className={cardClassName}>
       <div className="departure-trigger">
         <div className="trigger-main">
           <div className="trigger-row">
-            <span className="route-badge">{departure.routeCode}</span>
+            <span className={`route-badge ${isFavorite ? "saved" : ""}`}>
+              {departure.routeCode}
+            </span>
             <span className="inline-stop-chip">
               {formatPlatform(departure.platform)}
             </span>
+
+            <div className="trigger-actions">
+              <button
+                type="button"
+                className={`route-action-button ${isFavorite ? "active" : ""}`}
+                aria-label={`${isFavorite ? "Remove" : "Save"} ${departure.routeCode} as a favourite`}
+                onClick={onToggleFavorite}
+              >
+                <FavoriteIcon filled={isFavorite} />
+              </button>
+            </div>
           </div>
 
           <div className="trigger-copy">
             <strong>{departure.destination}</strong>
             <span>{routeSummary}</span>
           </div>
+
+          {isFavorite ? (
+            <div className="trigger-flags">
+              <span className="departure-flag saved">
+                <FavoriteIcon filled />
+                <span>Saved bus</span>
+              </span>
+            </div>
+          ) : null}
         </div>
 
         <div className="trigger-side">
@@ -781,6 +969,20 @@ function CheckIcon() {
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function FavoriteIcon({ filled = false }) {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path
+        d="m10 3.2 2.1 4.258 4.7.682-3.4 3.315.802 4.684L10 13.93l-4.202 2.209.802-4.684-3.4-3.315 4.7-.682L10 3.2Z"
+        fill={filled ? "currentColor" : "none"}
+        stroke="currentColor"
+        strokeWidth="1.5"
         strokeLinejoin="round"
       />
     </svg>
@@ -865,8 +1067,77 @@ function getInitialStopId() {
   return isValidStopId(stopId) ? stopId : DEFAULT_STOP_ID;
 }
 
+function getInitialRouteId() {
+  const routeId = new URLSearchParams(window.location.search)
+    .get("route")
+    ?.trim();
+
+  return routeId ? routeId : ALL_ROUTES_ID;
+}
+
+function getInitialFavoriteRoutes() {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const storedFavorites = JSON.parse(
+      window.localStorage.getItem(FAVORITES_STORAGE_KEY) ?? "[]",
+    );
+
+    if (!Array.isArray(storedFavorites)) {
+      return [];
+    }
+
+    return storedFavorites.reduce((favorites, favorite) => {
+      if (!isValidFavoriteRoute(favorite)) {
+        return favorites;
+      }
+
+      const normalizedFavorite = createFavoriteRoute(favorite);
+      const alreadySaved = favorites.some((candidate) => {
+        return (
+          candidate.stopId === normalizedFavorite.stopId &&
+          candidate.routeCode === normalizedFavorite.routeCode
+        );
+      });
+
+      if (alreadySaved) {
+        return favorites;
+      }
+
+      return [...favorites, normalizedFavorite];
+    }, []);
+  } catch (storageError) {
+    console.error("Could not load saved favourites.", storageError);
+    return [];
+  }
+}
+
 function isValidStopId(stopId) {
   return typeof stopId === "string" && Object.hasOwn(STOPS, stopId);
+}
+
+function isValidFavoriteRoute(favorite) {
+  return (
+    Boolean(favorite) &&
+    typeof favorite === "object" &&
+    isValidStopId(favorite.stopId) &&
+    String(favorite.routeCode ?? "").trim().length > 0
+  );
+}
+
+function createFavoriteRoute(favorite) {
+  return {
+    stopId: favorite.stopId,
+    routeCode: String(favorite.routeCode).trim(),
+  };
+}
+
+function findFavoriteRoute(favorites, stopId, routeCode) {
+  return favorites.find((favorite) => {
+    return favorite.stopId === stopId && favorite.routeCode === routeCode;
+  });
 }
 
 function getStopOptionBadge(selectedStopId, optionId) {
@@ -947,7 +1218,9 @@ function buildPreviewDepartures(stopName) {
   const now = Date.now();
 
   return previewSchedule.map((departure, index) => {
-    const scheduledUtc = new Date(now + departure.minutesAway * 60_000).toISOString();
+    const scheduledUtc = new Date(
+      now + departure.minutesAway * 60_000,
+    ).toISOString();
 
     return {
       id: `preview-${departure.routeCode}-${index}`,
@@ -999,9 +1272,7 @@ function formatCountdown(minutesAway) {
 }
 
 function getRouteKind(routeCode) {
-  return /[A-Za-z]/.test(routeCode) && /\d/.test(routeCode)
-    ? "metro"
-    : "bus";
+  return /[A-Za-z]/.test(routeCode) && /\d/.test(routeCode) ? "metro" : "bus";
 }
 
 function formatRouteCount(count) {
@@ -1019,4 +1290,22 @@ function formatRouteSummary(headsign, fallback) {
   }
 
   return segments[0] || fallback || "";
+}
+
+function buildAppUrl({ baseUrl, stopId, routeCode }) {
+  const url = new URL(baseUrl);
+
+  if (stopId === DEFAULT_STOP_ID) {
+    url.searchParams.delete("stop");
+  } else {
+    url.searchParams.set("stop", stopId);
+  }
+
+  if (!routeCode || routeCode === ALL_ROUTES_ID) {
+    url.searchParams.delete("route");
+  } else {
+    url.searchParams.set("route", routeCode);
+  }
+
+  return `${url.pathname}${url.search}${url.hash}`;
 }
