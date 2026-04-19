@@ -4,25 +4,134 @@ import * as cheerio from "cheerio";
 
 const BRISBANE_TZ = "Australia/Brisbane";
 const CACHE_TTL_MS = 20_000;
+const STOP_SEARCH_CACHE_TTL_MS = 60_000;
+const DEFAULT_DEPARTURE_LIMIT = 24;
+const MAX_DEPARTURE_LIMIT = 96;
 const SOURCE_NAME = "UQ Lakes station";
-const STATION_METADATA_URL =
-  "https://jp.translink.com.au/api/stop/timetable/uq%20lakes%20station";
+const DEFAULT_STOP_LOOKUP = SOURCE_NAME;
+const departuresCache = new Map();
+const stopSearchCache = new Map();
+const OFFICIAL_FALLBACK_STOPS = [
+  {
+    id: "South Bank busway station",
+    name: "South Bank busway station",
+    aliases: ["South Bank", "Southbank", "South Bank station", "South Bank busway"],
+  },
+  {
+    id: "South Bank station",
+    name: "South Bank station",
+    aliases: ["South Bank train station"],
+  },
+  {
+    id: "Cultural Centre station",
+    name: "Cultural Centre station",
+    aliases: [
+      "Cultural Centre",
+      "Cultural Center",
+      "Cultural Ctr",
+      "Culture Centre",
+      "Culture Center",
+      "Culture Ctr",
+    ],
+  },
+  {
+    id: "King George Square bus station",
+    name: "King George Square bus station",
+    aliases: ["King George Square", "KGS"],
+  },
+  {
+    id: "Queen Street bus station",
+    name: "Queen Street bus station",
+    aliases: ["Queen Street", "Queen St"],
+  },
+  {
+    id: "Roma Street busway station",
+    name: "Roma Street busway station",
+    aliases: ["Roma Street", "Roma St", "Roma Street busway", "Roma St busway"],
+  },
+  {
+    id: "Roma Street station",
+    name: "Roma Street station",
+    aliases: ["Roma Street train station", "Roma St station"],
+  },
+  {
+    id: "Upper Mt Gravatt station",
+    name: "Upper Mt Gravatt station",
+    aliases: [
+      "Garden City",
+      "Garden City bus station",
+      "Garden City station",
+      "Garden City shopping centre",
+      "Upper Mount Gravatt",
+      "Upper Mt Gravatt",
+    ],
+  },
+  {
+    id: "UQ Lakes station",
+    name: "UQ Lakes station",
+    aliases: [
+      "UQ Lakes",
+      "UQ Lakes station",
+      "UQ Lake",
+      "University of Queensland",
+      "The University of Queensland",
+      "University of Qld",
+      "University Qld",
+      "Uni of Qld",
+      "Uni of Queensland",
+      "UQ",
+    ],
+  },
+  {
+    id: "Buranda busway station",
+    name: "Buranda busway station",
+    aliases: ["Buranda busway"],
+  },
+  {
+    id: "Buranda station",
+    name: "Buranda station",
+    aliases: ["Buranda train station"],
+  },
+  {
+    id: "UQ Chancellor's Place",
+    name: "UQ Chancellor's Place",
+    aliases: [
+      "Chancellors Place",
+      "Chancellor's Place",
+      "UQ Chancellors Place",
+      "UQ Chancellor's Place",
+      "UQ Chancellor station",
+      "UQ Chanceller station",
+      "Chanceller Place",
+      "Chanceller station",
+    ],
+  },
+];
 
-let departuresCache = {
-  expiresAt: 0,
-  value: null,
-};
+export async function fetchDepartures(options = {}) {
+  const stopLookup = String(options.stopLookup ?? DEFAULT_STOP_LOOKUP).trim();
+  const displayName = String(options.displayName ?? "").trim();
+  const departureLimit = getDepartureLimit(options.limit);
+  const cacheKey = `${stopLookup.toLowerCase()}::${departureLimit}`;
+  const cachedEntry = departuresCache.get(cacheKey);
 
-export async function fetchDepartures() {
-  if (departuresCache.value && departuresCache.expiresAt > Date.now()) {
-    return departuresCache.value;
+  if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
+    return cachedEntry.value;
   }
 
-  const station = await fetchJson(STATION_METADATA_URL);
+  const station = await fetchJson(
+    `https://jp.translink.com.au/api/stop/timetable/${encodeURIComponent(stopLookup)}`,
+  );
+  const stationStops = Array.isArray(station?.stops) ? station.stops : [];
+
+  if (!stationStops.length) {
+    throw new Error(`Could not find stop data for ${stopLookup}.`);
+  }
+
   const serviceDate = getBrisbaneDate(new Date());
   const now = new Date();
   const stopResults = await Promise.allSettled(
-    station.stops.map((stop) => fetchFullTimetable(stop, serviceDate)),
+    stationStops.map((stop) => fetchFullTimetable(stop, serviceDate)),
   );
 
   const stopTimetables = stopResults
@@ -30,7 +139,7 @@ export async function fetchDepartures() {
     .map((result) => result.value);
 
   if (stopTimetables.length === 0) {
-    throw new Error("Could not load any UQ Lakes stop timetables.");
+    throw new Error(`Could not load any timetables for ${stopLookup}.`);
   }
 
   const departures = stopTimetables
@@ -41,22 +150,121 @@ export async function fetchDepartures() {
         new Date(right.scheduledUtc).getTime()
       );
     })
-    .slice(0, 24);
+    .slice(0, departureLimit);
 
   const payload = {
-    stopName: SOURCE_NAME,
+    stopName: displayName || stationStops[0]?.name || stopLookup,
     generatedAt: new Date().toISOString(),
-    sourceUrl:
-      "https://jp.translink.com.au/plan-your-journey/stops/uq%20lakes%20station",
+    sourceUrl: `https://jp.translink.com.au/plan-your-journey/stops/${encodeURIComponent(
+      stationStops[0]?.id ?? stopLookup,
+    )}`,
     departures,
   };
 
-  departuresCache = {
+  departuresCache.set(cacheKey, {
     expiresAt: Date.now() + CACHE_TTL_MS,
     value: payload,
-  };
+  });
 
   return payload;
+}
+
+function getDepartureLimit(limit) {
+  const parsedLimit = Number(limit);
+
+  if (!Number.isFinite(parsedLimit) || parsedLimit <= 0) {
+    return DEFAULT_DEPARTURE_LIMIT;
+  }
+
+  return Math.min(MAX_DEPARTURE_LIMIT, Math.max(1, Math.floor(parsedLimit)));
+}
+
+export async function fetchStopMatches(query) {
+  const normalizedQuery = String(query ?? "").trim();
+
+  if (normalizedQuery.length < 2) {
+    return [];
+  }
+
+  const cacheKey = normalizedQuery.toLowerCase();
+  const cachedEntry = stopSearchCache.get(cacheKey);
+
+  if (cachedEntry && cachedEntry.expiresAt > Date.now()) {
+    return cachedEntry.value;
+  }
+
+  const fallbackStops = getFallbackStopMatches(normalizedQuery);
+  let stops = [];
+
+  try {
+    const payload = await fetchJson(
+      `https://jp.translink.com.au/api/stop/timetable/${encodeURIComponent(normalizedQuery)}`,
+    );
+    stops = Array.isArray(payload?.stops)
+      ? payload.stops
+          .map((stop) => {
+            const id = String(stop?.id ?? "").trim();
+            const name = String(stop?.name ?? "").trim();
+
+            if (!id || !name) {
+              return null;
+            }
+
+            return { id, name, aliases: [] };
+          })
+          .filter(Boolean)
+      : [];
+  } catch (error) {
+    console.error("Could not fetch stop matches from Translink API.", error);
+  }
+
+  const uniqueStops = Array.from(
+    [...fallbackStops, ...stops].reduce((stopMap, stop) => {
+      const stopKey = normalizeStopSearchValue(stop.name);
+
+      if (!stopMap.has(stopKey)) {
+        stopMap.set(stopKey, stop);
+      }
+
+      return stopMap;
+    }, new Map()).values(),
+  ).slice(0, 12);
+
+  stopSearchCache.set(cacheKey, {
+    expiresAt: Date.now() + STOP_SEARCH_CACHE_TTL_MS,
+    value: uniqueStops,
+  });
+
+  return uniqueStops;
+}
+
+function getFallbackStopMatches(query) {
+  const normalizedQuery = normalizeStopSearchValue(query);
+
+  return OFFICIAL_FALLBACK_STOPS.filter((stop) => {
+    const searchValues = [stop.name, ...(stop.aliases ?? [])];
+
+    return searchValues.some((value) => {
+      const normalizedValue = normalizeStopSearchValue(value);
+
+      return (
+        normalizedValue.includes(normalizedQuery) ||
+        normalizedQuery.includes(normalizedValue)
+      );
+    });
+  });
+}
+
+function normalizeStopSearchValue(value) {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\bstreet\b/g, "st")
+    .replace(/\bsouth\b/g, "sth")
+    .replace(/\bmount\b/g, "mt")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function fetchJson(url) {
