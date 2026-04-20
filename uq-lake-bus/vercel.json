@@ -7,6 +7,9 @@
   "functions": {
     "api/departures.js": {
       "maxDuration": 30
+    },
+    "api/stops/search.js": {
+      "maxDuration": 30
     }
   }
 }

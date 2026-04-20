@@ -247,12 +247,29 @@ function getFallbackStopMatches(query) {
     return searchValues.some((value) => {
       const normalizedValue = normalizeStopSearchValue(value);
 
-      return (
-        normalizedValue.includes(normalizedQuery) ||
-        normalizedQuery.includes(normalizedValue)
-      );
+      return isStopSearchMatch(normalizedQuery, normalizedValue);
     });
   });
+}
+
+function isStopSearchMatch(queryKey, valueKey) {
+  if (!queryKey || !valueKey) {
+    return false;
+  }
+
+  if (queryKey === valueKey) {
+    return true;
+  }
+
+  if (queryKey.length < 4) {
+    return valueKey.startsWith(queryKey);
+  }
+
+  if (valueKey.length < 4) {
+    return false;
+  }
+
+  return valueKey.includes(queryKey) || queryKey.includes(valueKey);
 }
 
 function normalizeStopSearchValue(value) {

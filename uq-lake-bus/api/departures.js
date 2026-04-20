@@ -4,9 +4,17 @@ const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
 };
 
-export async function GET() {
+export async function GET(request) {
   try {
-    const departures = await fetchDepartures();
+    const url = new URL(request.url);
+    const stopId = String(url.searchParams.get("stopId") ?? "").trim();
+    const stopName = String(url.searchParams.get("stopName") ?? "").trim();
+    const limit = url.searchParams.get("limit");
+    const departures = await fetchDepartures({
+      stopLookup: stopId || stopName || undefined,
+      displayName: stopName || undefined,
+      limit,
+    });
 
     return new Response(JSON.stringify(departures), {
       status: 200,

@@ -22,6 +22,11 @@ const PLANNER_DEPARTURE_LIMIT = 96;
 const ALL_ROUTES_ID = "all-routes";
 const BOARD_PAGE_ID = "board";
 const PLANNER_PAGE_ID = "planner";
+const PLANNER_FIELD_ORIGIN = "origin";
+const PLANNER_FIELD_DESTINATION = "destination";
+const WALKABLE_UQ_STOP_MESSAGE =
+  "Mate, just walk it. Both stops are inside UQ campus.";
+const WALKABLE_UQ_STOP_TOAST_ID = "walkable-uq-stop";
 const DEFAULT_STOP_ID = "uq-lakes-station";
 const BRISBANE_TZ = "Australia/Brisbane";
 const FAVORITES_STORAGE_KEY = "uq-bus-board-favorites-v1";
@@ -38,8 +43,16 @@ const PLANNER_QUICK_STOPS = [
     value: "UQ Lakes station",
   },
   {
-    label: "Chancellor's",
+    label: "Chancellor",
     value: "UQ Chancellor's Place",
+  },
+  {
+    label: "South Bank",
+    value: "South Bank busway station",
+  },
+  {
+    label: "Buranda",
+    value: "Buranda busway station",
   },
 ];
 
@@ -178,6 +191,8 @@ export default function App() {
   const [plannerDestinationQuery, setPlannerDestinationQuery] = useState("");
   const [plannerOriginStops, setPlannerOriginStops] = useState([]);
   const [plannerDestinationStops, setPlannerDestinationStops] = useState([]);
+  const [activePlannerField, setActivePlannerField] =
+    useState(PLANNER_FIELD_ORIGIN);
   const [plannerOriginPending, setPlannerOriginPending] = useState(false);
   const [plannerDestinationPending, setPlannerDestinationPending] =
     useState(false);
@@ -400,6 +415,20 @@ export default function App() {
   }, [activeStop.displayName, currentPage]);
 
   useEffect(() => {
+    if (isWalkableUqStopPair(plannerOriginQuery, plannerDestinationQuery)) {
+      setPlannerError(WALKABLE_UQ_STOP_MESSAGE);
+      setPlannerSearchResult(null);
+      showWalkableUqStopToast();
+      return;
+    }
+
+    toast.dismiss(WALKABLE_UQ_STOP_TOAST_ID);
+    setPlannerError((currentError) =>
+      currentError === WALKABLE_UQ_STOP_MESSAGE ? "" : currentError,
+    );
+  }, [plannerDestinationQuery, plannerOriginQuery]);
+
+  useEffect(() => {
     const nextQuery = plannerOriginQuery.trim();
 
     if (!nextQuery) {
@@ -587,12 +616,32 @@ export default function App() {
 
   const handlePlannerOriginChange = (value) => {
     setPlannerError("");
+    setActivePlannerField(PLANNER_FIELD_ORIGIN);
+    setPlannerOriginPending(Boolean(value.trim()));
+    setPlannerOriginStops([]);
     setPlannerOriginQuery(value);
   };
 
   const handlePlannerDestinationChange = (value) => {
     setPlannerError("");
+    setActivePlannerField(PLANNER_FIELD_DESTINATION);
+    setPlannerDestinationPending(Boolean(value.trim()));
+    setPlannerDestinationStops([]);
     setPlannerDestinationQuery(value);
+  };
+
+  const handlePlannerQuickStop = (value) => {
+    const targetField =
+      activePlannerField === PLANNER_FIELD_DESTINATION
+        ? PLANNER_FIELD_DESTINATION
+        : PLANNER_FIELD_ORIGIN;
+
+    if (targetField === PLANNER_FIELD_DESTINATION) {
+      handlePlannerDestinationChange(value);
+      return;
+    }
+
+    handlePlannerOriginChange(value);
   };
 
   const performPlannerSearch = async ({
@@ -610,6 +659,17 @@ export default function App() {
           bodyClassName: "bus-toast-body",
         });
       }
+      return false;
+    }
+
+    if (isWalkableUqStopPair(nextOriginQuery, nextDestinationQuery)) {
+      setPlannerError(WALKABLE_UQ_STOP_MESSAGE);
+      setPlannerSearchResult(null);
+
+      if (showMissingToast) {
+        showWalkableUqStopToast();
+      }
+
       return false;
     }
 
@@ -646,6 +706,17 @@ export default function App() {
           bodyClassName: "bus-toast-body",
         });
         setPlannerSearchResult(null);
+        return false;
+      }
+
+      if (isWalkableUqStopPair(originStop.label, destinationStop.label)) {
+        setPlannerError(WALKABLE_UQ_STOP_MESSAGE);
+        setPlannerSearchResult(null);
+
+        if (showMissingToast) {
+          showWalkableUqStopToast();
+        }
+
         return false;
       }
 
@@ -761,6 +832,7 @@ export default function App() {
     setPlannerDestinationQuery(nextDestinationQuery);
     setPlannerOriginStops(plannerDestinationStops);
     setPlannerDestinationStops(plannerOriginStops);
+    setActivePlannerField(PLANNER_FIELD_ORIGIN);
 
     if (nextOriginQuery.trim() && nextDestinationQuery.trim()) {
       void performPlannerSearch({
@@ -804,6 +876,7 @@ export default function App() {
     setPlannerDestinationStops([]);
     setPlannerError("");
     setPlannerSearchResult(null);
+    setActivePlannerField(PLANNER_FIELD_ORIGIN);
   };
 
   const toggleFavoriteRoute = (routeCode) => {
@@ -1156,32 +1229,22 @@ export default function App() {
               <h1 className="section-title">Find a direct bus</h1>
             </div>
 
-            <div className="planner-quick-actions" aria-label="Quick origin stops">
+            <div className="planner-quick-actions" aria-label="Quick station stops">
               {PLANNER_QUICK_STOPS.map((stop) => (
                 <button
                   key={stop.value}
                   type="button"
                   className="planner-quick-action"
-                  onClick={() => handlePlannerOriginChange(stop.value)}
+                  onClick={() => handlePlannerQuickStop(stop.value)}
                 >
-                  {stop.value === "UQ Chancellor's Place" ? (
+                  {stop.value.startsWith("UQ ") ? (
                     <FaUniversity aria-hidden="true" />
                   ) : (
                     <FaMapMarkerAlt aria-hidden="true" />
                   )}
-                  {stop.label}
+                  <span className="planner-quick-label">{stop.label}</span>
                 </button>
               ))}
-              <button
-                type="button"
-                className="planner-swap-button planner-quick-swap"
-                onClick={handlePlannerSwapStations}
-              >
-                <span className="planner-swap-icon" aria-hidden="true">
-                  <FaExchangeAlt />
-                </span>
-                <span>Switch</span>
-              </button>
             </div>
 
             <form className="planner-form" onSubmit={handlePlannerSearch}>
@@ -1194,7 +1257,21 @@ export default function App() {
                 placeholder="Buranda busway station"
                 query={plannerOriginQuery}
                 onQueryChange={handlePlannerOriginChange}
+                onFieldFocus={() => setActivePlannerField(PLANNER_FIELD_ORIGIN)}
               />
+
+              <div className="planner-swap-row">
+                <button
+                  type="button"
+                  className="planner-swap-button"
+                  onClick={handlePlannerSwapStations}
+                >
+                  <span className="planner-swap-icon" aria-hidden="true">
+                    <FaExchangeAlt />
+                  </span>
+                  <span>Switch</span>
+                </button>
+              </div>
 
               <PlannerStopField
                 fieldId="planner-destination-stop"
@@ -1205,6 +1282,9 @@ export default function App() {
                 placeholder="UQ Lakes station"
                 query={plannerDestinationQuery}
                 onQueryChange={handlePlannerDestinationChange}
+                onFieldFocus={() =>
+                  setActivePlannerField(PLANNER_FIELD_DESTINATION)
+                }
               />
 
               <div className="planner-form-actions">
@@ -1233,9 +1313,6 @@ export default function App() {
               </div>
             </form>
 
-            {plannerError ? (
-              <p className="planner-inline-error">{plannerError}</p>
-            ) : null}
           </section>
 
           <section className="surface-panel feed-panel planner-results-panel">
@@ -1530,6 +1607,22 @@ function TransportIcon({ kind }) {
   );
 }
 
+function showWalkableUqStopToast() {
+  if (toast.isActive(WALKABLE_UQ_STOP_TOAST_ID)) {
+    return;
+  }
+
+  toast.info(WALKABLE_UQ_STOP_MESSAGE, {
+    autoClose: false,
+    bodyClassName: "bus-toast-body",
+    className: "bus-toast bus-toast-error",
+    closeButton: true,
+    draggable: true,
+    pauseOnHover: true,
+    toastId: WALKABLE_UQ_STOP_TOAST_ID,
+  });
+}
+
 function PlannerStopField({
   fieldId,
   icon,
@@ -1538,21 +1631,38 @@ function PlannerStopField({
   pending = false,
   placeholder,
   query,
+  onFieldFocus,
   onQueryChange,
 }) {
   const [isFocused, setIsFocused] = useState(false);
   const visibleOptions = options.slice(0, 8);
   const hasQuery = Boolean(query.trim());
-  const showEmptyState = hasQuery && !pending && visibleOptions.length === 0;
-  const showSuggestions = isFocused && hasQuery && (visibleOptions.length > 0 || showEmptyState);
+  const normalizedQuery = normalizeSearchCandidate(query);
+  const hasExactSelection = visibleOptions.some((option) => {
+    return normalizeSearchCandidate(option.label) === normalizedQuery;
+  });
+  const showEmptyState =
+    isFocused && hasQuery && !pending && visibleOptions.length === 0;
+  const showSuggestions =
+    isFocused &&
+    hasQuery &&
+    !hasExactSelection &&
+    (visibleOptions.length > 0 || showEmptyState);
   const fieldStatus = pending
     ? "Searching"
     : hasQuery && visibleOptions.length
       ? `${visibleOptions.length} possible station${visibleOptions.length === 1 ? "" : "s"}`
       : "";
+  const fieldClassName = [
+    "planner-field",
+    fieldId === "planner-destination-stop" ? "to-field" : "from-field",
+    showSuggestions ? "open" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <div className={`planner-field ${showSuggestions ? "open" : ""}`}>
+    <div className={fieldClassName}>
       <div className="planner-field-head">
         <label className="planner-field-label" htmlFor={fieldId}>
           <span className="planner-field-label-icon" aria-hidden="true">
@@ -1579,7 +1689,10 @@ function PlannerStopField({
           aria-controls={`${fieldId}-suggestions`}
           onBlur={() => setIsFocused(false)}
           onChange={(event) => onQueryChange(event.target.value)}
-          onFocus={() => setIsFocused(true)}
+          onFocus={() => {
+            setIsFocused(true);
+            onFieldFocus?.();
+          }}
         />
       </div>
 
@@ -1653,11 +1766,20 @@ function DepartureCard({
               <span className="inline-stop-chip">
                 {formatPlatform(departure.platform)}
               </span>
-            ) : departure.platform ? (
-              <span className="inline-stop-chip planner">
-                {formatPlatform(departure.platform)}
+            ) : (
+              <span
+                className="inline-stop-chip planner"
+                title={formatPlannerBoardingStopTitle(
+                  departure,
+                  plannerJourney.originLabel,
+                )}
+              >
+                {formatPlannerBoardingStop(
+                  departure,
+                  plannerJourney.originLabel,
+                )}
               </span>
-            ) : null}
+            )}
 
             {showFavoriteAction ? (
               <div className="trigger-actions">
@@ -2090,7 +2212,72 @@ function buildPreviewDepartures(stopName) {
 }
 
 function formatPlatform(platform) {
-  return platform ? `Stop ${platform}` : "UQ";
+  const rawPlatform = String(platform ?? "").trim();
+
+  if (!rawPlatform) {
+    return "UQ";
+  }
+
+  if (/^(stop|platform|plat|bay|stand)\b/i.test(rawPlatform)) {
+    return rawPlatform.replace(/^platform\b/i, "Stop");
+  }
+
+  return `Stop ${rawPlatform}`;
+}
+
+function formatPlannerBoardingStop(departure, originLabel) {
+  const platformLabel = departure?.platform
+    ? formatPlatform(departure.platform)
+    : "";
+  const stationLabel = formatCompactBoardingStation(
+    departure?.stopName || originLabel,
+  );
+
+  if (stationLabel && platformLabel) {
+    return `From ${stationLabel} ${platformLabel}`;
+  }
+
+  if (stationLabel) {
+    return `From ${stationLabel}`;
+  }
+
+  if (departure?.platform) {
+    return `From ${platformLabel}`;
+  }
+
+  const stopName = String(departure?.stopName ?? "").trim();
+
+  if (stopName) {
+    return `From ${stopName}`;
+  }
+
+  const origin = String(originLabel ?? "").trim();
+
+  return origin ? `From ${origin}` : "From stop";
+}
+
+function formatCompactBoardingStation(label) {
+  return stripStationPlatformDetail(label)
+    .replace(/\bbusway\b/gi, "")
+    .replace(/\bstation\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatPlannerBoardingStopTitle(departure, originLabel) {
+  const stopName = String(departure?.stopName ?? "").trim();
+
+  if (stopName) {
+    return `Board from ${stopName}`;
+  }
+
+  if (departure?.platform) {
+    return `Board from ${formatPlatform(departure.platform)}`;
+  }
+
+  const origin = String(originLabel ?? "").trim();
+
+  return origin ? `Board from ${origin}` : "Board from this stop";
 }
 
 function formatTime(dateTime) {
@@ -2218,16 +2405,30 @@ function getCanonicalStationLabel(values) {
 
     return normalizedValues.some((value) => {
       return stationKeys.some((stationKey) => {
-        return (
-          value === stationKey ||
-          value.includes(stationKey) ||
-          stationKey.includes(value)
-        );
+        return isStationKeyMatch(value, stationKey);
       });
     });
   });
 
   return matchedStation?.label ?? "";
+}
+
+function isStationKeyMatch(value, stationKey) {
+  if (!value || !stationKey) {
+    return false;
+  }
+
+  if (value === stationKey) {
+    return true;
+  }
+
+  const keyIsSpecific = stationKey.length >= 4;
+  const valueIsSpecific = value.length >= 4;
+
+  return (
+    (keyIsSpecific && value.includes(stationKey)) ||
+    (valueIsSpecific && stationKey.includes(value))
+  );
 }
 
 function stripStationPlatformDetail(label) {
@@ -2279,6 +2480,27 @@ function resolveSearchStop(query, stops) {
     }) ??
     null
   );
+}
+
+function isWalkableUqStopPair(originValue, destinationValue) {
+  return (
+    isWalkableUqStopValue(originValue) &&
+    isWalkableUqStopValue(destinationValue)
+  );
+}
+
+function isWalkableUqStopValue(value) {
+  const normalizedCanonical = normalizeSearchCandidate(
+    getCanonicalStationLabel([value]),
+  );
+  const normalizedValue = normalizeSearchCandidate(value);
+
+  return [normalizedCanonical, normalizedValue].some((candidate) => {
+    return (
+      candidate === normalizeSearchCandidate("UQ Lakes station") ||
+      candidate === normalizeSearchCandidate("UQ Chancellor's Place")
+    );
+  });
 }
 
 function getDepartureSearchTargets(departure, stop) {
