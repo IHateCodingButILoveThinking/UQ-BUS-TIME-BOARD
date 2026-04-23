@@ -511,6 +511,35 @@ export default function App() {
   }, [plannerDestinationQuery]);
 
   useEffect(() => {
+    if (
+      currentPage !== PLANNER_PAGE_ID ||
+      !plannerSearchResult?.originStop?.label ||
+      !plannerSearchResult?.destinationStop?.label
+    ) {
+      return undefined;
+    }
+
+    const refreshPlannerResults = () => {
+      void performPlannerSearch({
+        destinationQuery: plannerSearchResult.destinationStop.label,
+        originQuery: plannerSearchResult.originStop.label,
+        showMissingToast: false,
+        showResultToast: false,
+        silent: true,
+      });
+    };
+    const timerId = window.setInterval(refreshPlannerResults, REFRESH_MS);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [
+    currentPage,
+    plannerSearchResult?.destinationStop?.label,
+    plannerSearchResult?.originStop?.label,
+  ]);
+
+  useEffect(() => {
     if (activeStop.sourceMode === "live" && loading && departures.length === 0) {
       return;
     }
@@ -619,6 +648,7 @@ export default function App() {
     setActivePlannerField(PLANNER_FIELD_ORIGIN);
     setPlannerOriginPending(Boolean(value.trim()));
     setPlannerOriginStops([]);
+    setPlannerSearchResult(null);
     setPlannerOriginQuery(value);
   };
 
@@ -627,6 +657,7 @@ export default function App() {
     setActivePlannerField(PLANNER_FIELD_DESTINATION);
     setPlannerDestinationPending(Boolean(value.trim()));
     setPlannerDestinationStops([]);
+    setPlannerSearchResult(null);
     setPlannerDestinationQuery(value);
   };
 
@@ -648,6 +679,8 @@ export default function App() {
     destinationQuery,
     originQuery,
     showMissingToast = true,
+    showResultToast = true,
+    silent = false,
   }) => {
     const nextOriginQuery = String(originQuery ?? "").trim();
     const nextDestinationQuery = String(destinationQuery ?? "").trim();
@@ -673,7 +706,9 @@ export default function App() {
       return false;
     }
 
-    setPlannerLoading(true);
+    if (!silent) {
+      setPlannerLoading(true);
+    }
     setPlannerError("");
 
     try {
@@ -692,20 +727,28 @@ export default function App() {
       );
 
       if (!originStop) {
-        toast.error("Choose a real Translink origin stop.", {
-          className: "bus-toast bus-toast-error",
-          bodyClassName: "bus-toast-body",
-        });
-        setPlannerSearchResult(null);
+        if (!silent) {
+          setPlannerSearchResult(null);
+        }
+        if (showResultToast) {
+          toast.error("Choose a real Translink origin stop.", {
+            className: "bus-toast bus-toast-error",
+            bodyClassName: "bus-toast-body",
+          });
+        }
         return false;
       }
 
       if (!destinationStop) {
-        toast.error("Choose a real Translink destination stop.", {
-          className: "bus-toast bus-toast-error",
-          bodyClassName: "bus-toast-body",
-        });
-        setPlannerSearchResult(null);
+        if (!silent) {
+          setPlannerSearchResult(null);
+        }
+        if (showResultToast) {
+          toast.error("Choose a real Translink destination stop.", {
+            className: "bus-toast bus-toast-error",
+            bodyClassName: "bus-toast-body",
+          });
+        }
         return false;
       }
 
@@ -724,10 +767,12 @@ export default function App() {
         normalizeSearchCandidate(originStop.label) ===
         normalizeSearchCandidate(destinationStop.label)
       ) {
-        toast.info("Choose two different stops.", {
-          className: "bus-toast bus-toast-info",
-          bodyClassName: "bus-toast-body",
-        });
+        if (showResultToast) {
+          toast.info("Choose two different stops.", {
+            className: "bus-toast bus-toast-info",
+            bodyClassName: "bus-toast-body",
+          });
+        }
         return false;
       }
 
@@ -780,45 +825,57 @@ export default function App() {
       });
 
       if (noServicesRunning) {
-        toast.info(
-          `No buses are running from ${originStop.label} right now.`,
-          {
-            className: "bus-toast bus-toast-info",
-            bodyClassName: "bus-toast-body",
-          },
-        );
+        if (showResultToast) {
+          toast.info(
+            `No buses are running from ${originStop.label} right now.`,
+            {
+              className: "bus-toast bus-toast-info",
+              bodyClassName: "bus-toast-body",
+            },
+          );
+        }
         return false;
       }
 
       if (!matches.length) {
-        toast.info(emptyMessage, {
-          className: "bus-toast bus-toast-info",
-          bodyClassName: "bus-toast-body",
-        });
+        if (showResultToast) {
+          toast.info(emptyMessage, {
+            className: "bus-toast bus-toast-info",
+            bodyClassName: "bus-toast-body",
+          });
+        }
         return false;
       }
 
-      toast.success(
-        `Showing ${matches.length} direct ${
-          matches.length === 1 ? "bus" : "buses"
-        } to ${destinationStop.label}.`,
-        {
-          className: "bus-toast bus-toast-success",
-          bodyClassName: "bus-toast-body",
-        },
-      );
+      if (showResultToast) {
+        toast.success(
+          `Showing ${matches.length} direct ${
+            matches.length === 1 ? "bus" : "buses"
+          } to ${destinationStop.label}.`,
+          {
+            className: "bus-toast bus-toast-success",
+            bodyClassName: "bus-toast-body",
+          },
+        );
+      }
       return true;
     } catch (searchError) {
       console.error("Could not load planner departures.", searchError);
-      setPlannerError("Could not load direct buses right now.");
-      setPlannerSearchResult(null);
-      toast.error("Could not load direct buses right now.", {
-        className: "bus-toast bus-toast-error",
-        bodyClassName: "bus-toast-body",
-      });
+      if (!silent) {
+        setPlannerError("Could not load direct buses right now.");
+        setPlannerSearchResult(null);
+      }
+      if (showResultToast) {
+        toast.error("Could not load direct buses right now.", {
+          className: "bus-toast bus-toast-error",
+          bodyClassName: "bus-toast-body",
+        });
+      }
       return false;
     } finally {
-      setPlannerLoading(false);
+      if (!silent) {
+        setPlannerLoading(false);
+      }
     }
   };
 
